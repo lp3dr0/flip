@@ -114,21 +114,13 @@ function startMatch(p1, p2, betAmount) {
   userToMatch[p1.userId] = matchId;
   userToMatch[p2.userId] = matchId;
 
-  emitToPlayer(p1, 'matched', { matchId, betAmount, seedHash, opponent: { username: p2.username } });
-  emitToPlayer(p2, 'matched', { matchId, betAmount, seedHash, opponent: { username: p1.username } });
+  // Send matched + countdown start in one shot — client drives the visual countdown
+  const payload = { matchId, betAmount, seedHash };
+  emitToPlayer(p1, 'matched', { ...payload, opponent: { username: p2.username } });
+  emitToPlayer(p2, 'matched', { ...payload, opponent: { username: p1.username } });
 
-  // Countdown 3 → 2 → 1 → resolve
-  [3, 2, 1].forEach((count, i) => {
-    const t = setTimeout(() => {
-      const match = activeMatches[matchId];
-      if (!match) return;
-      emitToPlayer(p1, 'countdown', { count });
-      emitToPlayer(p2, 'countdown', { count });
-    }, (i + 1) * 1000);
-    activeMatches[matchId]?.timers.push(t);
-  });
-
-  const resolveTimer = setTimeout(() => resolveMatch(matchId), 4000);
+  // Resolve after countdown (3s) + small buffer
+  const resolveTimer = setTimeout(() => resolveMatch(matchId), 4200);
   if (activeMatches[matchId]) activeMatches[matchId].timers.push(resolveTimer);
 }
 

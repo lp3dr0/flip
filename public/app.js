@@ -302,6 +302,25 @@ dom.btnPlayAgain.addEventListener('click', () => {
 function connectSocket() {
   socket = io({ auth: { token: state.token } });
 
+  socket.on('connect', () => {
+    // Re-join queue automatically after reconnect
+    const phase = document.querySelector('.phase.active')?.id;
+    if (phase === 'phase-queue' && state.selectedBet) {
+      socket.emit('join_queue', { betAmount: state.selectedBet });
+    }
+    // If mid-match when disconnected, go back to lobby
+    if (phase === 'phase-matched' || phase === 'phase-countdown' || phase === 'phase-flip') {
+      showPhase('lobby');
+      showToast('Reconnected — match was lost');
+    }
+  });
+
+  socket.on('disconnect', (reason) => {
+    if (reason !== 'io client disconnect') {
+      showToast('Connection lost — reconnecting…');
+    }
+  });
+
   socket.on('connect_error', err => {
     console.error('Socket error:', err.message);
     showToast('Connection error');
@@ -330,28 +349,25 @@ function connectSocket() {
     dom.matchedSeedHash.textContent = seedHash;
 
     showPhase('matched');
-  });
 
-  socket.on('countdown', ({ count }) => {
-    showPhase('countdown');
-    dom.countdownNumber.textContent = count;
-    // Re-trigger animation
-    dom.countdownNumber.style.animation = 'none';
-    void dom.countdownNumber.offsetWidth;
-    dom.countdownNumber.style.animation = '';
+    // Client-driven countdown — no server round-trips needed
+    startCountdown(3);
   });
 
   socket.on('result', (data) => {
+    stopCountdown();
     state.currentMatch = { ...state.currentMatch, ...data };
     playFlipThenResult(data);
   });
 
   socket.on('match_cancelled', ({ reason }) => {
+    stopCountdown();
     showPhase('lobby');
     showToast(reason || 'Match cancelled');
   });
 
   socket.on('game_error', ({ message }) => {
+    stopCountdown();
     showPhase('lobby');
     showToast(message);
   });
@@ -395,6 +411,55 @@ function showResult(data) {
   dom.phaseResult.classList.remove('win-glow', 'lose-glow');
   void dom.phaseResult.offsetWidth;
   dom.phaseResult.classList.add(won ? 'win-glow' : 'lose-glow');
+}
+
+// ── Countdown (client-driven) ────────────────────────────────
+let countdownTimer = null;
+let safetyTimer = null;
+
+function startCountdown(from) {
+  stopCountdown();
+  let count = from;
+
+  // Brief delay to show "matched" screen first
+  setTimeout(() => {
+    showPhase('countdown');
+    setCountdownNumber(count);
+
+    countdownTimer = setInterval(() => {
+      count--;
+      if (count <= 0) {
+        stopCountdown();
+        showPhase('flip');
+      } else {
+        setCountdownNumber(count);
+      }
+    }, 1000);
+
+    // Safety net: if result never arrives within 10s, go back to lobby
+    safetyTimer = setTimeout(() => {
+      const phase = document.querySelector('.phase.active')?.id;
+      if (phase === 'phase-countdown' || phase === 'phase-flip') {
+        stopCountdown();
+        showPhase('lobby');
+        showToast('Match timed out — try again');
+      }
+    }, 10000);
+  }, 800);
+}
+
+function stopCountdown() {
+  clearInterval(countdownTimer);
+  clearTimeout(safetyTimer);
+  countdownTimer = null;
+  safetyTimer = null;
+}
+
+function setCountdownNumber(n) {
+  dom.countdownNumber.textContent = n;
+  dom.countdownNumber.style.animation = 'none';
+  void dom.countdownNumber.offsetWidth;
+  dom.countdownNumber.style.animation = '';
 }
 
 // ── History ───────────────────────────────────────────────────
